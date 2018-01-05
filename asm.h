@@ -1,3 +1,3 @@
-void activate(unsigned int *stack);
+unsigned int *activate(unsigned int *stack);
 
 void syscall();
