@@ -15,4 +15,4 @@ clean:
 .o.elf:
 	$(LD) $(LDFLAGS) -o $@ $^
 
-kernel.elf: context_switch.o bootstrap.o kernel.o
+kernel.elf: syscalls.o context_switch.o bootstrap.o kernel.o
