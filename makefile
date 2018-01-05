@@ -4,12 +4,15 @@ CFLAGS=-ansi -pedantic -Wall -Wextra -march=armv6 -msoft-float -fPIC -mapcs-fram
 LD=arm-linux-gnueabi-ld
 LDFLAGS=-N -Ttext=0x10000
 
-.SUFFIXES: .o .elf
-.o.elf:
-	$(LD) $(LDFLAGS) -o $@ $^
+clean:
+	$(RM) *.elf *.o
 
-.SUFFIXES: .s.o
+.SUFFIXES: .s .o .elf
+
 .s.o:
 	$(CC) $(CFLAGS) -o $@ -c $^
+
+.o.elf:
+	$(LD) $(LDFLAGS) -o $@ $^
 
 kernel.elf: context_switch.o bootstrap.o kernel.o
