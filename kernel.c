@@ -41,11 +41,7 @@ void bwputs(char *s)
 void task()
 {
 	bwputs("In another task\n");
-	
-	while(1) 
-	{
-		syscall();
-	}
+	while(1);
 }
 
 void first(void)
@@ -58,15 +54,17 @@ void first(void)
 	}
 
 	bwputs("In user mode time 2\n");
-	
-	while(1)
-	{
-		syscall();
-	}
+	while(1);
 }
 
 int main()
 {
+	*(PIC + VIC_INTENABLE) = PIC_TIMER01;
+
+	*TIMER0 = 1000000;
+	*(TIMER0 + TIMER_CONTROL) = TIMER_EN | TIMER_PERIODIC | TIMER_32BIT 
+		| TIMER_INTEN;
+
 	unsigned int stacks[TASK_LIMIT][STACK_SIZE];
 	unsigned int *tasks[TASK_LIMIT];
 	size_t task_count = 0;
@@ -104,6 +102,13 @@ int main()
 					task_count++;
 				}
 				break;
+			case -4:  /* Timer 0 or 1 went off */
+				if(*(TIMER0 + TIMER_MIS)) /* Timer 0 went off */
+				{
+					*(TIMER0 + TIMER_INTCLR) = 1; /* Clear Interrupt */
+					bwputs("tick\n");
+				}
+				break;
 		}
 
 		current_task++;
@@ -113,14 +118,6 @@ int main()
 			current_task = 0;
 		}
 	}
-
-	bwputs("Starting....\n");
-	activate(tasks[0]);
-	bwputs("Heading back to user mode\n");
-	activate(tasks[1]);
-	bwputs("Done.\n");
-
-	while(1); /*because we can't exit the program*/
 
 	return 0;
 }

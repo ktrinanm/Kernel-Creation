@@ -4,6 +4,8 @@ CFLAGS=-ansi -pedantic -Wall -Wextra -march=armv6 -msoft-float -fPIC -mapcs-fram
 LD=arm-linux-gnueabi-ld
 LDFLAGS=-N -Ttext=0x10000
 
+kernel.elf: syscalls.o context_switch.o bootstrap.o kernel.o
+
 clean:
 	$(RM) *.elf *.o
 
@@ -15,4 +17,3 @@ clean:
 .o.elf:
 	$(LD) $(LDFLAGS) -o $@ $^
 
-kernel.elf: syscalls.o context_switch.o bootstrap.o kernel.o
