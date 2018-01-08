@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 unsigned int *activate(unsigned int *stack);
 
 int fork();

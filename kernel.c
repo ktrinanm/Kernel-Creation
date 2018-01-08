@@ -4,7 +4,7 @@
 #include <stddef.h>
 
 #define STACK_SIZE 1024	/* Size of task stacks in words */
-#define TASK_LIMIT 2 	/* Max number of tasks we can handle */
+#define TASK_LIMIT 3 	/* Max number of tasks we can handle */
 
 #define PIPE_BUF	512  /* Size of largest atomic pipe message */
 #define PIPE_LIMIT	(TASK_LIMIT*5)
@@ -47,10 +47,36 @@ struct pipe_ringbuffer
 #define PIPE_POP(pipe, v) 	RB_POP((pipe), PIPE_BUF, (v))
 #define PIPE_LEN(pipe)		(RB_LEN((pipe), PIPE_BUF))
 
+#define PATH_MAX	255 /* Longest absolute path */
+#define PATHSERVER_FD	(TASK_LIMIT+3) /* File descriptor of pipe to 
+										  pathserver */
+
 void _read(unsigned int *task, unsigned int **tasks, size_t task_count, 
 		struct pipe_ringbuffer *pipes);
 void _write(unsigned int *task, unsigned int **tasks, size_t task_count,
 		struct pipe_ringbuffer *pipes);
+
+int strcmp(const char* a, const char* b)
+{
+	int r = 0;
+	while(!r && *a && *b)
+	{
+		r = (*a++) - (*b++);
+	}
+
+	return (*a) - (*b);
+}
+
+size_t strlen(const char *s)
+{
+	size_t r = 0;
+	while(*s++)
+	{
+		r++;
+	}
+
+	return r;
+}
 
 void *memcpy(void *dest, const void *src, size_t n)
 {
@@ -64,6 +90,85 @@ void *memcpy(void *dest, const void *src, size_t n)
 	}
 
 	return d;
+}
+
+int mkfifo(const char *pathname, int mode)
+{
+	size_t plen = strlen(pathname)+1;
+	char buf[4+4+PATH_MAX];
+	(void)mode;
+
+	*((unsigned int*)buf) = 0;
+	*((unsigned int*)(buf+4)) = plen;
+	memcpy(buf+4+4, pathname, plen);
+	write(PATHSERVER_FD, buf, 4+4+plen);
+
+	/* XXX: no error handling */
+	return 0;
+}
+
+int open(const char *pathname, int flags)
+{
+	unsigned int replyfd = getpid() + 3;
+	size_t plen = strlen(pathname)+1;
+	unsigned int fd = -1;
+	char buf[4+4+PATH_MAX];
+	(void)flags;
+
+	*((unsigned int*)buf) = replyfd;
+	*((unsigned int*)(buf+4)) = plen;
+	memcpy(buf+4+4, pathname, plen);
+	write(PATHSERVER_FD, buf, 4+4+plen);
+	read(replyfd, &fd, 4);
+
+	return fd;
+}
+
+void pathserver()
+{
+	char paths[PIPE_LIMIT - TASK_LIMIT - 3][PATH_MAX];
+	int npaths = 0;
+	int i = 0;
+	unsigned int plen = 0;
+	unsigned int replyfd = 0;
+	char path[PATH_MAX];
+
+	memcpy(paths[npaths++], "/sys/pathserver", sizeof("/sys/pathserver"));
+
+	while(1)
+	{
+		read(PATHSERVER_FD, &replyfd, 4);
+		read(PATHSERVER_FD, &plen, 4);
+		read(PATHSERVER_FD, path, plen);
+
+		if(!replyfd)
+		{
+			/* mkfifo */
+			memcpy(paths[npaths++], path, plen);
+		}
+		else
+		{
+			/* open */
+			/*Search for path */
+			for(i = 0; i < npaths; i++)
+			{
+				if(*paths[i] && strcmp(path, paths[i]) == 0)
+				{
+					i +=3; /* 0-2 are reservered */
+					i += TASK_LIMIT; /*FDs reserved for tasks */
+					write(replyfd, &i, 4);
+					i = 0;
+					break;
+				}
+			}
+
+			if(i >= npaths)
+			{
+				i = -1; /* Error: not found */
+				write(replyfd, &i, 4);
+			}
+		}
+	}
 }
 
 unsigned int *init_task (unsigned int *stack, void (*start)())
@@ -84,23 +189,45 @@ void bwputs(char *s)
 	}
 }
 
-void task()
+void otherguy()
 {
-	bwputs("In another task\n");
-	while(1);
+	int fd;
+	unsigned int len; 
+	char buf[20];
+	mkfifo("/proc/0", 0);
+	fd = open("/proc/0", 0);
+
+	while(1)
+	{
+		read(fd, &len, 4);
+		read(fd, buf, len);
+		bwputs(buf);
+	}
 }
 
 void first(void)
 {
-	bwputs("In user mode\n");
-	
+	int fd;
+
 	if(!fork())
 	{
-		task();
+		pathserver();
 	}
 
-	bwputs("In user mode time 2\n");
-	while(1);
+	if(!fork())
+	{
+		otherguy();
+	}
+
+	fd = open("/proc/0", 0);
+	while(1)
+	{
+		int len = sizeof("Ping\n");
+		char buf[sizeof("Ping\n")+4];
+		memcpy(buf, &len, 4);
+		memcpy(buf+4, "Ping\n", len);
+		write(fd, buf, len+4);
+	}
 }
 
 int main()
@@ -224,7 +351,6 @@ void _read(unsigned int *task, unsigned int **tasks, size_t task_count,
 		}
 	}
 }
-}
 
 void _write(unsigned int *task, unsigned int **tasks, size_t task_count,
 		struct pipe_ringbuffer *pipes)
@@ -232,11 +358,11 @@ void _write(unsigned int *task, unsigned int **tasks, size_t task_count,
 	/*If the fd is invalid or the write would be non-atomic */
 	if(task[2+0] > PIPE_LIMIT || task[2+2] > PIPE_BUF)
 	{
-		task[2+0] = -1
+		task[2+0] = -1;
 	}
 	else
 	{
-		struct pipe_ringbuffer *pipe - &pipes[task[2+0]];
+		struct pipe_ringbuffer *pipe = &pipes[task[2+0]];
 
 		if((size_t)PIPE_BUF - PIPE_LEN(*pipe) < task[2+2])
 		{
@@ -266,5 +392,4 @@ void _write(unsigned int *task, unsigned int **tasks, size_t task_count,
 			}
 		}
 	}
-}
 }
