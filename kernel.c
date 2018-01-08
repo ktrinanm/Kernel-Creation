@@ -3,8 +3,49 @@
 
 #include <stddef.h>
 
-#define STACK_SIZE 256 	/* Size of task stacks in words */
+#define STACK_SIZE 1024	/* Size of task stacks in words */
 #define TASK_LIMIT 2 	/* Max number of tasks we can handle */
+
+#define PIPE_BUF	512  /* Size of largest atomic pipe message */
+#define PIPE_LIMIT	(TASK_LIMIT*5)
+
+#define TASK_READY		0
+#define TASK_WAIT_READ	1
+#define TASK_WAIT_WRITE	2
+
+struct pipe_ringbuffer
+{
+	int start;
+	int end;
+	char data[PIPE_BUF];
+};
+
+#define RB_PUSH(rb, size, v) do \
+{ \
+	(rb).data[(rb).end] = (v); \
+	(rb).end++; \
+	if((rb).end > size) \
+	{ \
+		(rb).end = 0; \
+	} \
+}while (0)
+
+#define RB_POP(rb, size, v) do \
+{ \
+	(v) = (rb).data[(rb).start]; \
+	(rb).start++; \
+	if((rb).start > size) \
+	{ \
+		(rb).start = 0; \
+	} \
+}while(0)
+
+#define RB_LEN(rb, size) \
+	(((rb).end - (rb).start) + (((rb).end < (rb).start) ? size : 0))
+
+#define PIPE_PUSH(pipe, v) 	RB_PUSH((pipe), PIPE_BUF, (v))
+#define PIPE_POP(pipe, v) 	RB_POP((pipe), PIPE_BUF, (v))
+#define PIPE_LEN(pipe		(RB_LEN((pipe), PIPE_BUF))
 
 void *memcpy(void *dest, const void *src, size_t n)
 {
@@ -69,6 +110,13 @@ int main()
 	unsigned int *tasks[TASK_LIMIT];
 	size_t task_count = 0;
 	size_t current_task = 0;
+	struct pipe_ringbuffer pipes[PIPE_LIMIT];
+	size_t i;
+
+	for(i = 0; i < PIPE_LIMIT; i++)
+	{
+		pipes[i].start = pipes[i].end = 0;
+	}
 
 	tasks[task_count] = init_task(stacks[task_count], &first);
 	task_count++;
@@ -76,6 +124,7 @@ int main()
 	while(1)
 	{
 		tasks[current_task] = activate(tasks[current_task]);
+		tasks[current_task][-1] = TASK_READY;
 
 		switch(tasks[current_task][2+7])
 		{
@@ -102,6 +151,9 @@ int main()
 					task_count++;
 				}
 				break;
+			case 0x2:  /*getpid */
+				tasks[current_task][2+0] = current_task;
+				break;
 			case -4:  /* Timer 0 or 1 went off */
 				if(*(TIMER0 + TIMER_MIS)) /* Timer 0 went off */
 				{
@@ -111,12 +163,9 @@ int main()
 				break;
 		}
 
-		current_task++;
-
-		if(current_task >= task_count)
-		{
-			current_task = 0;
-		}
+		/* Select next TASK_READY task */
+		while(TASK_READY != tasks[current_task = 
+				(current_task+1 >= task_count ? 0 : current_task+1)][-1]);
 	}
 
 	return 0;
