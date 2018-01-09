@@ -4,7 +4,7 @@
 #include <stddef.h>
 
 #define STACK_SIZE 1024	/* Size of task stacks in words */
-#define TASK_LIMIT 3 	/* Max number of tasks we can handle */
+#define TASK_LIMIT 10 	/* Max number of tasks we can handle */
 
 #define PIPE_BUF	512  /* Size of largest atomic pipe message */
 #define PIPE_LIMIT	(TASK_LIMIT*5)
@@ -215,6 +215,45 @@ void serialout(volatile unsigned int* uart, unsigned int intr)
 			doread = 1;
 		}
 		interrupt_wait(intr);
+		*(uart + UARTICR) = UARTICR_TXIC;
+	}
+}
+
+void serialin(volatile unsigned int* uart, unsigned int intr)
+{
+	int fd;
+	char c;
+	
+	mkfifo("/dev/tty0/in", 0);
+	fd = open("/dev/tty0/in", 0);
+
+	/* enable RX interrupt on UART */
+	*(uart + UARTIMSC) |= UARTIMSC_RXIM;
+
+	while(1)
+	{
+		interrupt_wait(intr);
+		*(uart + UARTICR) = UARTICR_RXIC;
+
+		if(!(*(uart + UARTFR) & UARTFR_RXFE))
+		{
+			c = *uart;
+			write(fd, &c, 1);
+		}
+	}
+}
+
+void echo()
+{
+	int fdout, fdin;
+	char c;
+	fdout = open("/dev/tty0/out", 0);
+	fdin = open("/dev/tty0/in", 0);
+
+	while(1)
+	{
+		read(fdin, &c, 1);
+		write(fdout, &c, 1);
 	}
 }
 
@@ -232,9 +271,15 @@ void first()
 		serialout(UART0, PIC_UART0);
 	}
 
-	fd = open("/dev/tty0/out", 0);
-	write(fd, "woo\n", sizeof("woo\n"));
-	write(fd, "thar\n", sizeof("thar\n"));
+	if(!fork())
+	{
+		serialin(UART0, PIC_UART0);
+	}
+
+	if(!fork())
+	{
+		echo();
+	}
 
 	while(1);
 }
