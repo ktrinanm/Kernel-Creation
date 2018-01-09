@@ -1,7 +1,9 @@
 #define UART0 ((volatile unsigned int*)0x101f1000)
 
-#define UARTFR 0x06
+#define UARTFR 		0x06
+#define UARTIMSC	0x0E	/* 0x38 bytes */
 #define UARTFR_TXFF 0x20
+#define UARTIMSC_TXIM	0x20
 
 /* http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0271d/index.html */
 #define TIMER0 ((volatile unsigned int*)0x101E2000)
@@ -19,7 +21,9 @@
 
 /* http://infocenter.arm.com/help/topci/com.arm.doc.dui0224i/I1042232.html*/
 #define PIC ((volatile unsigned int*)0x10140000)
+#define PIC_UART0	0x1000
 #define PIC_TIMER01 0x10
 
 /* http://infocenter.arm.com/help/topic/com.arm.doc.ddi9161e/I1006461.html*/
-#define VIC_INTENABLE 0x4  /* 0x10 bytes */
+#define VIC_INTENABLE 	0x4  /* 0x10 bytes */
+#define VIC_INTENCLEAR	0x5 /* 0x14 bytes */

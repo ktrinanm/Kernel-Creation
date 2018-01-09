@@ -12,6 +12,7 @@
 #define TASK_READY		0
 #define TASK_WAIT_READ	1
 #define TASK_WAIT_WRITE	2
+#define TASK_WAIT_INTR	3
 
 struct pipe_ringbuffer
 {
@@ -189,23 +190,35 @@ void bwputs(char *s)
 	}
 }
 
-void otherguy()
+void serialout(volatile unsigned int* uart, unsigned int intr)
 {
 	int fd;
-	unsigned int len; 
-	char buf[20];
-	mkfifo("/proc/0", 0);
-	fd = open("/proc/0", 0);
+	char c;
 
+	mkfifo("/dev/tty0/out", 0);
+	fd = open("/dev/tty0/out", 0);
+
+	*(uart + UARTIMSC) |= UARTIMSC_TXIM;
+
+	int doread = 1;
 	while(1)
 	{
-		read(fd, &len, 4);
-		read(fd, buf, len);
-		bwputs(buf);
+		if(doread)
+		{
+			read(fd, &c, 1);
+		}
+		doread = 0;
+
+		if(!(*(uart + UARTFR) & UARTFR_TXFF))
+		{
+			*uart = c;
+			doread = 1;
+		}
+		interrupt_wait(intr);
 	}
 }
 
-void first(void)
+void first()
 {
 	int fd;
 
@@ -216,25 +229,21 @@ void first(void)
 
 	if(!fork())
 	{
-		otherguy();
+		serialout(UART0, PIC_UART0);
 	}
 
-	fd = open("/proc/0", 0);
-	while(1)
-	{
-		int len = sizeof("Ping\n");
-		char buf[sizeof("Ping\n")+4];
-		memcpy(buf, &len, 4);
-		memcpy(buf+4, "Ping\n", len);
-		write(fd, buf, len+4);
-	}
+	fd = open("/dev/tty0/out", 0);
+	write(fd, "woo\n", sizeof("woo\n"));
+	write(fd, "thar\n", sizeof("thar\n"));
+
+	while(1);
 }
 
 int main()
 {
 	*(PIC + VIC_INTENABLE) = PIC_TIMER01;
 
-	*TIMER0 = 1000000;
+	*TIMER0 = 10000;
 	*(TIMER0 + TIMER_CONTROL) = TIMER_EN | TIMER_PERIODIC | TIMER_32BIT 
 		| TIMER_INTEN;
 
@@ -292,13 +301,46 @@ int main()
 			case 0x4: /* read */
 				_read(tasks[current_task], tasks, task_count, pipes);
 				break;
-			case -4:  /* Timer 0 or 1 went off */
-				if(*(TIMER0 + TIMER_MIS)) /* Timer 0 went off */
-				{
-					*(TIMER0 + TIMER_INTCLR) = 1; /* Clear Interrupt */
-					bwputs("tick\n");
-				}
+			case 0x5: /* interrupt wait */
+				/* Enable interrupt */
+				*(PIC + VIC_INTENABLE) = tasks[current_task][2+0];
+
+				/* Block task waiting for interrupt to happen */
+				tasks[current_task][-1] = TASK_WAIT_INTR;
 				break;
+			default: /* Catch all interrupts */
+				if((int)tasks[current_task][2+7] < 0)
+				{
+					unsigned int intr = (1 << -tasks[current_task][2+7]);
+
+					if(intr == PIC_TIMER01)
+					{
+						/* Never disable the timer. Needed for preemption */
+						if(*(TIMER0 + TIMER_MIS))
+						{ /* Timer0 went off */
+							*(TIMER0 + TIMER_INTCLR) = 1; /* Clear 
+															 interrupt */
+						}
+					}
+					else
+					{
+						/* Disable interrupt, interrupt_wait re-enables */
+						*(PIC + VIC_INTENCLEAR) = intr;
+					}
+
+					/** Unblock any waiting tasks
+					 * 		XXX: nondeterministic unblock order
+					 **/
+					for(i = 0; i < task_count; i++)
+					{
+						if(tasks[i][-1] == TASK_WAIT_INTR 
+								&& tasks[i][2+0] == intr)
+						{
+							tasks[i][-1] = TASK_READY;
+						}
+					}
+				}
+
 		}
 
 		/* Select next TASK_READY task */
